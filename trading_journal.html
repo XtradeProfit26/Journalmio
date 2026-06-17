@@ -309,6 +309,8 @@
         <span style="color:var(--text-dim);font-size:14px">$</span>
         <input type="number" class="input-field" id="cap-amount-input" placeholder="0.00" step="0.01" min="0" oninput="checkCapValid()" style="max-width:none;flex:1">
       </div>
+      <div class="card-title" style="margin-top:14px">Motivo (opcional)</div>
+      <textarea class="transcript-area" id="cap-reason-input" placeholder="Ej: retiro para gastos, retiro de ganancias del mes..." style="min-height:60px"></textarea>
     </div>
     <button class="btn-primary" id="btn-save-capital" disabled onclick="saveCapitalMove()">Guardar movimiento →</button>
     <button class="btn-secondary" onclick="renderTodayPanel()">← Volver</button>
@@ -618,6 +620,7 @@ function showCapitalMove() {
   document.getElementById('cap-deposito').className = 'result-btn';
   document.getElementById('cap-retiro').className = 'result-btn';
   document.getElementById('cap-amount-input').value = '';
+  document.getElementById('cap-reason-input').value = '';
   document.getElementById('btn-save-capital').disabled = true;
   document.getElementById('panel-initial').style.display = 'none';
   document.getElementById('panel-capital').style.display = 'block';
@@ -637,13 +640,14 @@ function checkCapValid() {
 
 function saveCapitalMove() {
   const amt = parseFloat(document.getElementById('cap-amount-input').value);
+  const reason = document.getElementById('cap-reason-input').value;
   const delta = capMoveType === 'Depósito' ? amt : -amt;
   capitalCurrent = parseFloat((capitalCurrent + delta).toFixed(2));
   localStorage.setItem('tj_cap_current', capitalCurrent);
 
   // Log it
   let movements = JSON.parse(localStorage.getItem('tj_cap_movements') || '[]');
-  movements.push({ date: todayStr(), type: capMoveType, amount: amt });
+  movements.push({ date: todayStr(), type: capMoveType, amount: amt, reason: reason });
   localStorage.setItem('tj_cap_movements', JSON.stringify(movements));
 
   updateHeaderBalance();
@@ -1017,6 +1021,7 @@ function exportToExcel() {
   });
 
   sorted.forEach(d => {
+    const dayPnl = (d.trades && d.trades.length > 0) ? calcPnL(d.trades) : 0;
     if (d.noTrade) {
       rows.push({
         'Fecha': d.date,
@@ -1029,7 +1034,8 @@ function exportToExcel() {
         'SL corrido a BE': '',
         'Sensación post-trade': '',
         'Motivo no operar': d.noTradeReason || '',
-        'Reflexión': d.noTradeText || ''
+        'Reflexión': d.noTradeText || '',
+        'PnL del día ($)': 0
       });
     } else if (d.trades && d.trades.length > 0) {
       d.trades.forEach((t, i) => {
@@ -1045,7 +1051,8 @@ function exportToExcel() {
           'SL corrido a BE': t.be === true ? 'Sí' : t.be === false ? 'No' : '',
           'Sensación post-trade': t.feelingPost || '',
           'Motivo no operar': '',
-          'Reflexión': ''
+          'Reflexión': '',
+          'PnL del día ($)': dayPnl
         });
       });
     }
@@ -1058,7 +1065,7 @@ function exportToExcel() {
 
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [
-    {wch:12},{wch:12},{wch:9},{wch:16},{wch:40},{wch:10},{wch:10},{wch:14},{wch:40},{wch:22},{wch:40}
+    {wch:12},{wch:12},{wch:9},{wch:16},{wch:40},{wch:10},{wch:10},{wch:14},{wch:40},{wch:22},{wch:40},{wch:14}
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Historial');
@@ -1066,9 +1073,9 @@ function exportToExcel() {
   const movements = JSON.parse(localStorage.getItem('tj_cap_movements') || '[]');
   if (movements.length > 0) {
     const wsMov = XLSX.utils.json_to_sheet(movements.map(m => ({
-      'Fecha': m.date, 'Tipo': m.type, 'Monto ($)': m.amount
+      'Fecha': m.date, 'Tipo': m.type, 'Monto ($)': m.amount, 'Motivo': m.reason || ''
     })));
-    wsMov['!cols'] = [{wch:12},{wch:12},{wch:12}];
+    wsMov['!cols'] = [{wch:12},{wch:12},{wch:12},{wch:40}];
     XLSX.utils.book_append_sheet(wb, wsMov, 'Movimientos de Capital');
   }
 
