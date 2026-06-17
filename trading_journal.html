@@ -160,6 +160,7 @@
   .progress-bar { height: 4px; background: var(--border); border-radius: 2px; margin-bottom: 6px; overflow: hidden; }
   .progress-fill { height: 100%; background: var(--gold); border-radius: 2px; transition: width 0.5s ease; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -287,12 +288,73 @@
       <div style="font-size:13px;color:var(--text-dim);line-height:1.6">Registrá cada trade antes y después.<br>Máximo 5 operaciones por día.</div>
     </div>
     <button class="btn-primary" onclick="startFirstTrade()">Registrar primer trade →</button>
+    <button class="btn-secondary" onclick="showNoTradeDay()">No operé hoy</button>
+    <button class="btn-secondary" onclick="showCapitalMove()">💰 Depósito / Retiro</button>
+  </div>
+
+  <!-- CAPITAL MOVEMENT -->
+  <div id="panel-capital" style="display:none">
+    <div class="card">
+      <div class="section-header">
+        <div class="section-num">$</div>
+        <div class="section-title">Movimiento de capital</div>
+      </div>
+      <div class="card-title">Tipo</div>
+      <div class="result-grid" style="grid-template-columns:1fr 1fr;margin-bottom:14px">
+        <button class="result-btn" id="cap-deposito" onclick="selectCapType('Depósito')">Depósito</button>
+        <button class="result-btn" id="cap-retiro" onclick="selectCapType('Retiro')">Retiro</button>
+      </div>
+      <div class="input-row" style="max-width:none">
+        <span class="input-label">Monto</span>
+        <span style="color:var(--text-dim);font-size:14px">$</span>
+        <input type="number" class="input-field" id="cap-amount-input" placeholder="0.00" step="0.01" min="0" oninput="checkCapValid()" style="max-width:none;flex:1">
+      </div>
+    </div>
+    <button class="btn-primary" id="btn-save-capital" disabled onclick="saveCapitalMove()">Guardar movimiento →</button>
+    <button class="btn-secondary" onclick="renderTodayPanel()">← Volver</button>
+  </div>
+
+  <!-- NO TRADE DAY -->
+  <div id="panel-notrade" style="display:none">
+    <div class="card">
+      <div class="section-header">
+        <div class="section-num">—</div>
+        <div class="section-title">Día sin operar</div>
+      </div>
+      <div class="card-title">Motivo</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px" id="notrade-reasons">
+        <button class="result-btn" style="text-align:left;padding:12px" onclick="selectNoTradeReason('Sin setup',this)">Sin setup válido</button>
+        <button class="result-btn" style="text-align:left;padding:12px" onclick="selectNoTradeReason('Mercado cerrado',this)">Mercado cerrado</button>
+        <button class="result-btn" style="text-align:left;padding:12px" onclick="selectNoTradeReason('Evité por estado emocional',this)">Evité por estado emocional</button>
+        <button class="result-btn" style="text-align:left;padding:12px" onclick="selectNoTradeReason('Otro',this)">Otro</button>
+      </div>
+      <div class="card-title">Reflexión</div>
+      <div class="recorder">
+        <button class="record-btn" id="record-btn-notrade" onclick="toggleRecording('notrade')">🎤</button>
+        <div class="record-status" id="record-status-notrade">Tocá para grabar</div>
+      </div>
+      <textarea class="transcript-area" id="transcript-notrade" placeholder="¿Por qué no operaste hoy?"></textarea>
+    </div>
+    <button class="btn-primary" id="btn-save-notrade" disabled onclick="saveNoTradeDay()">Guardar día →</button>
+    <button class="btn-secondary" onclick="renderTodayPanel()">← Volver</button>
+  </div>
+
+  <!-- NO TRADE DAY CLOSED -->
+  <div id="panel-notrade-closed" style="display:none">
+    <div class="card" style="text-align:center;padding:30px 16px">
+      <div style="font-size:48px;margin-bottom:12px">⚪</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px">Día sin operar</div>
+      <div style="font-size:13px;color:var(--text-dim);margin-bottom:14px" id="notrade-closed-reason"></div>
+      <div class="modal-text" id="notrade-closed-text" style="text-align:left;background:var(--surface2);padding:12px;border-radius:8px"></div>
+    </div>
+    <button class="btn-secondary" onclick="resetDay()">↺ Reiniciar día</button>
   </div>
 
 </div>
 
 <!-- ===== HISTORIAL ===== -->
 <div class="screen" id="screen-historial">
+  <button class="btn-primary" onclick="exportToExcel()" style="margin-bottom:14px">⬇ Descargar historial (.xlsx)</button>
   <div class="filter-row">
     <button class="filter-btn active" onclick="filterHistory('all',this)">Todos</button>
     <button class="filter-btn" onclick="filterHistory('green',this)">🟢 Exitosos</button>
@@ -400,13 +462,19 @@ function showScreen(name, btn) {
 
 // ========== TODAY PANEL ==========
 function renderTodayPanel() {
-  const panels = ['panel-initial','panel-pretrade','panel-posttrade','panel-summary','panel-closed','block-screen'];
+  const panels = ['panel-initial','panel-pretrade','panel-posttrade','panel-summary','panel-closed','block-screen','panel-notrade','panel-notrade-closed','panel-capital'];
   panels.forEach(p => {
     const el = document.getElementById(p);
     if (el) { el.style.display = 'none'; el.classList && el.classList.remove('active'); }
   });
 
   renderTradeDots();
+
+  if (today.noTrade) {
+    renderNoTradeClosed();
+    document.getElementById('panel-notrade-closed').style.display = 'block';
+    return;
+  }
 
   if (today.closed) {
     renderClosedDay();
@@ -504,6 +572,81 @@ function resetDay() {
   today = { date: todayStr(), trades: [], closed: false };
   currentTrade = { emotion: null, reasonPre: '', result: null, amount: '', be: null, feelingPost: '' };
   saveToday();
+  renderTodayPanel();
+}
+
+// ========== NO TRADE DAY ==========
+let noTradeReason = null;
+
+function showNoTradeDay() {
+  noTradeReason = null;
+  document.querySelectorAll('#notrade-reasons .result-btn').forEach(b => b.className = 'result-btn');
+  document.getElementById('transcript-notrade').value = '';
+  document.getElementById('btn-save-notrade').disabled = true;
+  document.getElementById('panel-initial').style.display = 'none';
+  document.getElementById('panel-notrade').style.display = 'block';
+}
+
+function selectNoTradeReason(reason, btn) {
+  noTradeReason = reason;
+  document.querySelectorAll('#notrade-reasons .result-btn').forEach(b => { b.style.borderColor=''; b.style.background=''; b.style.color=''; b.classList.remove('sel-PROFIT'); });
+  btn.style.borderColor = 'var(--gold)';
+  btn.style.background = 'rgba(201,168,76,0.12)';
+  btn.style.color = 'var(--gold)';
+  document.getElementById('btn-save-notrade').disabled = false;
+}
+
+function saveNoTradeDay() {
+  today.noTrade = true;
+  today.noTradeReason = noTradeReason;
+  today.noTradeText = document.getElementById('transcript-notrade').value;
+  today.closed = true;
+  saveToday();
+  renderTodayPanel();
+}
+
+function renderNoTradeClosed() {
+  document.getElementById('notrade-closed-reason').textContent = today.noTradeReason || '';
+  document.getElementById('notrade-closed-text').textContent = today.noTradeText || '(sin reflexión)';
+}
+
+// ========== CAPITAL MOVEMENT ==========
+let capMoveType = null;
+
+function showCapitalMove() {
+  capMoveType = null;
+  document.getElementById('cap-deposito').className = 'result-btn';
+  document.getElementById('cap-retiro').className = 'result-btn';
+  document.getElementById('cap-amount-input').value = '';
+  document.getElementById('btn-save-capital').disabled = true;
+  document.getElementById('panel-initial').style.display = 'none';
+  document.getElementById('panel-capital').style.display = 'block';
+}
+
+function selectCapType(type) {
+  capMoveType = type;
+  document.getElementById('cap-deposito').className = 'result-btn' + (type === 'Depósito' ? ' sel-PROFIT' : '');
+  document.getElementById('cap-retiro').className = 'result-btn' + (type === 'Retiro' ? ' sel-SL' : '');
+  checkCapValid();
+}
+
+function checkCapValid() {
+  const amt = parseFloat(document.getElementById('cap-amount-input').value);
+  document.getElementById('btn-save-capital').disabled = !capMoveType || !amt || amt <= 0;
+}
+
+function saveCapitalMove() {
+  const amt = parseFloat(document.getElementById('cap-amount-input').value);
+  const delta = capMoveType === 'Depósito' ? amt : -amt;
+  capitalCurrent = parseFloat((capitalCurrent + delta).toFixed(2));
+  localStorage.setItem('tj_cap_current', capitalCurrent);
+
+  // Log it
+  let movements = JSON.parse(localStorage.getItem('tj_cap_movements') || '[]');
+  movements.push({ date: todayStr(), type: capMoveType, amount: amt });
+  localStorage.setItem('tj_cap_movements', JSON.stringify(movements));
+
+  updateHeaderBalance();
   renderTodayPanel();
 }
 
@@ -757,10 +900,10 @@ function filterHistory(f, btn) {
 function renderHistory() {
   const list = document.getElementById('history-list');
   if (!list) return;
-  let data = [...db].filter(d => d.trades && d.trades.length > 0).reverse();
-  if (activeFilter === 'green') data = data.filter(d => getSemColor(d.trades) === 'green');
-  if (activeFilter === 'yellow') data = data.filter(d => getSemColor(d.trades) === 'yellow');
-  if (activeFilter === 'red') data = data.filter(d => getSemColor(d.trades) === 'red');
+  let data = [...db].filter(d => (d.trades && d.trades.length > 0) || d.noTrade).reverse();
+  if (activeFilter === 'green') data = data.filter(d => !d.noTrade && getSemColor(d.trades) === 'green');
+  if (activeFilter === 'yellow') data = data.filter(d => !d.noTrade && getSemColor(d.trades) === 'yellow');
+  if (activeFilter === 'red') data = data.filter(d => !d.noTrade && getSemColor(d.trades) === 'red');
 
   if (data.length === 0) {
     list.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div>No hay registros todavía.</div>`;
@@ -768,6 +911,17 @@ function renderHistory() {
   }
 
   list.innerHTML = data.map(d => {
+    if (d.noTrade) {
+      return `<div class="history-item" onclick="showDetail('${d.date}')">
+        <div class="history-top">
+          <span class="history-date">${d.date}</span>
+          <span class="history-badge badge-gray">⚪ SIN OPERAR</span>
+        </div>
+        <div class="history-bottom">
+          <span>${d.noTradeReason || ''}</span>
+        </div>
+      </div>`;
+    }
     const sem = calcSemaphore(d.trades);
     const pnl = calcPnL(d.trades);
     const color = getSemColor(d.trades);
@@ -852,6 +1006,74 @@ function renderResumen() {
       }).join('');
     }
   }
+}
+// ========== EXPORT EXCEL ==========
+function exportToExcel() {
+  const rows = [];
+  const sorted = [...db].sort((a, b) => {
+    const [da, ma, ya] = a.date.split('/').map(Number);
+    const [db2, mb, yb] = b.date.split('/').map(Number);
+    return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db2);
+  });
+
+  sorted.forEach(d => {
+    if (d.noTrade) {
+      rows.push({
+        'Fecha': d.date,
+        'Tipo': 'Sin operar',
+        'N° Trade': '',
+        'Estado emocional': '',
+        'Razón de entrada': '',
+        'Resultado': '',
+        'Monto ($)': '',
+        'SL corrido a BE': '',
+        'Sensación post-trade': '',
+        'Motivo no operar': d.noTradeReason || '',
+        'Reflexión': d.noTradeText || ''
+      });
+    } else if (d.trades && d.trades.length > 0) {
+      d.trades.forEach((t, i) => {
+        const monto = t.result === 'PROFIT' ? parseFloat(t.amount || 0) : t.result === 'SL' ? -10 : 0;
+        rows.push({
+          'Fecha': d.date,
+          'Tipo': 'Trade',
+          'N° Trade': i + 1,
+          'Estado emocional': t.emotion || '',
+          'Razón de entrada': t.reasonPre || '',
+          'Resultado': t.result || '',
+          'Monto ($)': monto,
+          'SL corrido a BE': t.be === true ? 'Sí' : t.be === false ? 'No' : '',
+          'Sensación post-trade': t.feelingPost || '',
+          'Motivo no operar': '',
+          'Reflexión': ''
+        });
+      });
+    }
+  });
+
+  if (rows.length === 0) {
+    alert('No hay datos para exportar todavía.');
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [
+    {wch:12},{wch:12},{wch:9},{wch:16},{wch:40},{wch:10},{wch:10},{wch:14},{wch:40},{wch:22},{wch:40}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Historial');
+
+  const movements = JSON.parse(localStorage.getItem('tj_cap_movements') || '[]');
+  if (movements.length > 0) {
+    const wsMov = XLSX.utils.json_to_sheet(movements.map(m => ({
+      'Fecha': m.date, 'Tipo': m.type, 'Monto ($)': m.amount
+    })));
+    wsMov['!cols'] = [{wch:12},{wch:12},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, wsMov, 'Movimientos de Capital');
+  }
+
+  const fileName = `trading_journal_${todayStr().replace(/\//g,'-')}.xlsx`;
+  XLSX.writeFile(wb, fileName);
 }
 </script>
 </body>
