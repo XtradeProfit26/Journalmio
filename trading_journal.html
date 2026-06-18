@@ -263,7 +263,7 @@
     </div>
     <button class="btn-primary" id="btn-new-trade" onclick="startNewTrade()">+ Nuevo trade</button>
     <button class="btn-primary" id="btn-close-day" onclick="closeDay()" style="background:var(--green-dim);color:var(--green);border:1px solid var(--green)">✓ Cerrar día</button>
-    <button class="btn-secondary" onclick="resetDay()">↺ Reiniciar día</button>
+    <button class="btn-secondary" onclick="confirmResetDay()">↺ Reiniciar día</button>
   </div>
 
   <!-- DAY CLOSED -->
@@ -277,7 +277,8 @@
       <div class="card-title">Trades registrados</div>
       <div id="closed-trades"></div>
     </div>
-    <button class="btn-secondary" onclick="resetDay()">↺ Nuevo día</button>
+    <div style="font-size:12px;color:var(--text-dim);text-align:center;margin-bottom:10px">✓ Este día ya quedó guardado en tu historial</div>
+    <button class="btn-secondary" onclick="confirmResetDay()">↺ Empezar día nuevo</button>
   </div>
 
   <!-- INITIAL: emotion check before first trade -->
@@ -349,7 +350,8 @@
       <div style="font-size:13px;color:var(--text-dim);margin-bottom:14px" id="notrade-closed-reason"></div>
       <div class="modal-text" id="notrade-closed-text" style="text-align:left;background:var(--surface2);padding:12px;border-radius:8px"></div>
     </div>
-    <button class="btn-secondary" onclick="resetDay()">↺ Reiniciar día</button>
+    <div style="font-size:12px;color:var(--text-dim);text-align:center;margin-bottom:10px">✓ Este día ya quedó guardado en tu historial</div>
+    <button class="btn-secondary" onclick="confirmResetDay()">↺ Empezar día nuevo</button>
   </div>
 
 </div>
@@ -577,6 +579,16 @@ function resetDay() {
   renderTodayPanel();
 }
 
+function confirmResetDay() {
+  const alreadySaved = today.closed === true;
+  const msg = alreadySaved
+    ? '¿Empezar un día nuevo? El día actual ya está guardado en tu historial, no se va a borrar.'
+    : '¿Seguro que querés reiniciar el día? Vas a borrar los trades de hoy que todavía no cerraste. Esta acción no se puede deshacer.';
+  if (confirm(msg)) {
+    resetDay();
+  }
+}
+
 // ========== NO TRADE DAY ==========
 let noTradeReason = null;
 
@@ -735,12 +747,22 @@ function renderDaySummary() {
     return `<div class="trade-item">
       <div class="trade-item-top">
         <span class="trade-item-label">Trade ${i+1} · ${t.emotion}</span>
-        <span class="trade-item-result" style="color:${color}">${t.result} ${amt}${be}</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span class="trade-item-result" style="color:${color}">${t.result} ${amt}${be}</span>
+          <span onclick="deleteTodayTrade(${i})" style="color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">✕</span>
+        </span>
       </div>
       ${t.reasonPre ? `<div class="trade-item-text">Antes: "${t.reasonPre.substring(0,80)}${t.reasonPre.length>80?'...':''}"</div>` : ''}
       ${t.feelingPost ? `<div class="trade-item-text">Después: "${t.feelingPost.substring(0,80)}${t.feelingPost.length>80?'...':''}"</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function deleteTodayTrade(index) {
+  if (!confirm('¿Borrar este trade? No se puede deshacer.')) return;
+  today.trades.splice(index, 1);
+  saveToday();
+  renderTodayPanel();
 }
 
 function renderClosedDay() {
@@ -776,12 +798,32 @@ function renderClosedDay() {
     return `<div class="trade-item">
       <div class="trade-item-top">
         <span class="trade-item-label">Trade ${i+1} · ${t.emotion}</span>
-        <span class="trade-item-result" style="color:${color}">${t.result} ${amt}</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span class="trade-item-result" style="color:${color}">${t.result} ${amt}</span>
+          <span onclick="deleteClosedTrade('${today.date}',${i})" style="color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">✕</span>
+        </span>
       </div>
       ${t.reasonPre ? `<div class="trade-item-text">Antes: "${t.reasonPre.substring(0,100)}${t.reasonPre.length>100?'...':''}"</div>` : ''}
       ${t.feelingPost ? `<div class="trade-item-text">Después: "${t.feelingPost.substring(0,100)}${t.feelingPost.length>100?'...':''}"</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function deleteClosedTrade(date, index) {
+  if (!confirm('¿Borrar este trade? El balance se va a recalcular. No se puede deshacer.')) return;
+  const dayIdx = db.findIndex(d => d.date === date);
+  if (dayIdx < 0) return;
+  const oldPnl = calcPnL(db[dayIdx].trades);
+  db[dayIdx].trades.splice(index, 1);
+  const newPnl = calcPnL(db[dayIdx].trades);
+  const diff = newPnl - oldPnl;
+  capitalCurrent = parseFloat((capitalCurrent + diff).toFixed(2));
+  localStorage.setItem('tj_cap_current', capitalCurrent);
+  localStorage.setItem('tj_db', JSON.stringify(db));
+  if (date === today.date) today = db[dayIdx];
+  updateHeaderBalance();
+  renderTodayPanel();
+  renderHistory();
 }
 
 function closeDay() {
@@ -946,9 +988,28 @@ function renderHistory() {
 function showDetail(date) {
   const d = db.find(r => r.date === date);
   if (!d) return;
+  document.getElementById('modal-date').textContent = date;
+
+  if (d.noTrade) {
+    document.getElementById('modal-body').innerHTML = `
+      <div class="modal-section">
+        <div class="modal-section-title">Resultado</div>
+        <div class="modal-text">⚪ <strong>Día sin operar</strong> — ${d.noTradeReason || ''}</div>
+      </div>
+      ${d.noTradeText ? `
+        <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px">
+          <div class="modal-section-title">Reflexión</div>
+          <div class="modal-text">${d.noTradeText}</div>
+        </div>
+      ` : ''}
+      <button class="btn-danger" onclick="deleteHistoryDay('${date}')">✕ Borrar este registro</button>
+    `;
+    document.getElementById('modal-overlay').classList.add('active');
+    return;
+  }
+
   const sem = calcSemaphore(d.trades);
   const pnl = calcPnL(d.trades);
-  document.getElementById('modal-date').textContent = date;
   document.getElementById('modal-body').innerHTML = `
     <div class="modal-section">
       <div class="modal-section-title">Resultado</div>
@@ -956,13 +1017,59 @@ function showDetail(date) {
     </div>
     ${d.trades.map((t, i) => `
       <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:8px">
-        <div class="modal-section-title">Trade ${i+1} · ${t.emotion} · ${t.result}</div>
+        <div class="modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Trade ${i+1} · ${t.emotion} · ${t.result}</span>
+          <span onclick="deleteHistoryTrade('${date}',${i})" style="color:var(--red);cursor:pointer;font-size:13px">✕ Borrar</span>
+        </div>
         ${t.reasonPre ? `<div class="modal-text" style="margin-bottom:6px"><strong>Antes:</strong> ${t.reasonPre}</div>` : ''}
         ${t.feelingPost ? `<div class="modal-text"><strong>Después:</strong> ${t.feelingPost}</div>` : ''}
       </div>
     `).join('')}
+    <button class="btn-danger" onclick="deleteHistoryDay('${date}')">✕ Borrar día completo</button>
   `;
   document.getElementById('modal-overlay').classList.add('active');
+}
+
+function deleteHistoryTrade(date, index) {
+  if (!confirm('¿Borrar este trade? El balance se va a recalcular. No se puede deshacer.')) return;
+  const dayIdx = db.findIndex(d => d.date === date);
+  if (dayIdx < 0) return;
+  const oldPnl = calcPnL(db[dayIdx].trades);
+  db[dayIdx].trades.splice(index, 1);
+  const newPnl = calcPnL(db[dayIdx].trades);
+  const diff = newPnl - oldPnl;
+  capitalCurrent = parseFloat((capitalCurrent + diff).toFixed(2));
+  localStorage.setItem('tj_cap_current', capitalCurrent);
+
+  if (db[dayIdx].trades.length === 0) {
+    db.splice(dayIdx, 1);
+    document.getElementById('modal-overlay').classList.remove('active');
+  }
+  localStorage.setItem('tj_db', JSON.stringify(db));
+  if (date === today.date) today = db.find(d => d.date === date) || { date: todayStr(), trades: [], closed: false };
+
+  updateHeaderBalance();
+  renderHistory();
+  renderTodayPanel();
+  if (db.findIndex(d => d.date === date) >= 0 && db.find(d=>d.date===date).trades.length > 0) showDetail(date);
+}
+
+function deleteHistoryDay(date) {
+  if (!confirm('¿Borrar todo el registro de este día? El balance se va a recalcular. No se puede deshacer.')) return;
+  const dayIdx = db.findIndex(d => d.date === date);
+  if (dayIdx < 0) return;
+  const oldPnl = (db[dayIdx].trades && db[dayIdx].trades.length > 0) ? calcPnL(db[dayIdx].trades) : 0;
+  db.splice(dayIdx, 1);
+  capitalCurrent = parseFloat((capitalCurrent - oldPnl).toFixed(2));
+  localStorage.setItem('tj_cap_current', capitalCurrent);
+  localStorage.setItem('tj_db', JSON.stringify(db));
+
+  if (date === today.date) today = { date: todayStr(), trades: [], closed: false };
+
+  document.getElementById('modal-overlay').classList.remove('active');
+  updateHeaderBalance();
+  renderHistory();
+  renderTodayPanel();
 }
 
 function closeModal(e) {
