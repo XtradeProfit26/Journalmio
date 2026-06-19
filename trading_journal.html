@@ -285,7 +285,7 @@
       <div id="closed-trades"></div>
     </div>
     <div style="font-size:12px;color:var(--text-dim);text-align:center;margin-bottom:10px">✓ Este día ya quedó guardado en tu historial</div>
-    <button class="btn-secondary" onclick="confirmResetDay()">↺ Empezar día nuevo</button>
+    <button class="btn-secondary" onclick="goHome()">← Volver</button>
   </div>
 
   <!-- INITIAL: emotion check before first trade -->
@@ -358,7 +358,7 @@
     </div>
     <button class="btn-secondary" onclick="addAnotherReflection()">+ Agregar otra reflexión</button>
     <div style="font-size:12px;color:var(--text-dim);text-align:center;margin:10px 0">✓ Este día ya quedó guardado en tu historial</div>
-    <button class="btn-secondary" onclick="confirmResetDay()">↺ Empezar día nuevo</button>
+    <button class="btn-secondary" onclick="goHome()">← Volver</button>
   </div>
 
 </div>
@@ -603,6 +603,13 @@ function confirmResetDay() {
   if (confirm(msg)) {
     resetDay();
   }
+}
+
+// Simple "go back to home" — no popup, never touches saved DB data.
+function goHome() {
+  today = { date: todayStr(), trades: [], closed: false };
+  currentTrade = { emotion: null, reasonPre: '', result: null, amount: '', be: null, feelingPost: '' };
+  renderTodayPanel();
 }
 
 // ========== NO TRADE DAY ==========
