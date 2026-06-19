@@ -580,6 +580,15 @@ function selectEmotion(e) {
 }
 
 function resetDay() {
+  // If today's record is already saved (closed), just clear the local view —
+  // do NOT touch the saved DB record for this date.
+  if (today.closed === true) {
+    today = { date: todayStr(), trades: [], closed: false };
+    currentTrade = { emotion: null, reasonPre: '', result: null, amount: '', be: null, feelingPost: '' };
+    renderTodayPanel();
+    return;
+  }
+  // Not yet saved — safe to fully reset and persist an empty day.
   today = { date: todayStr(), trades: [], closed: false };
   currentTrade = { emotion: null, reasonPre: '', result: null, amount: '', be: null, feelingPost: '' };
   saveToday();
