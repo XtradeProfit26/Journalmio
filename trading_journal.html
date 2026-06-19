@@ -351,13 +351,13 @@
 
   <!-- NO TRADE DAY CLOSED -->
   <div id="panel-notrade-closed" style="display:none">
-    <div class="card" style="text-align:center;padding:30px 16px">
+    <div class="card" style="text-align:center;padding:24px 16px">
       <div style="font-size:48px;margin-bottom:12px">⚪</div>
       <div style="font-size:16px;font-weight:700;margin-bottom:8px">Día sin operar</div>
-      <div style="font-size:13px;color:var(--text-dim);margin-bottom:14px" id="notrade-closed-reason"></div>
-      <div class="modal-text" id="notrade-closed-text" style="text-align:left;background:var(--surface2);padding:12px;border-radius:8px"></div>
+      <div id="notrade-closed-entries" style="text-align:left"></div>
     </div>
-    <div style="font-size:12px;color:var(--text-dim);text-align:center;margin-bottom:10px">✓ Este día ya quedó guardado en tu historial</div>
+    <button class="btn-secondary" onclick="addAnotherReflection()">+ Agregar otra reflexión</button>
+    <div style="font-size:12px;color:var(--text-dim);text-align:center;margin:10px 0">✓ Este día ya quedó guardado en tu historial</div>
     <button class="btn-secondary" onclick="confirmResetDay()">↺ Empezar día nuevo</button>
   </div>
 
@@ -627,17 +627,44 @@ function selectNoTradeReason(reason, btn) {
 }
 
 function saveNoTradeDay() {
+  const newText = document.getElementById('transcript-notrade').value;
+  const time = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  if (!today.noTradeEntries) today.noTradeEntries = [];
+  // Migrate old single-text format if present
+  if (today.noTradeText && today.noTradeEntries.length === 0) {
+    today.noTradeEntries.push({ time: '—', reason: today.noTradeReason || '', text: today.noTradeText });
+  }
+
+  today.noTradeEntries.push({ time, reason: noTradeReason, text: newText });
   today.noTrade = true;
-  today.noTradeReason = noTradeReason;
-  today.noTradeText = document.getElementById('transcript-notrade').value;
+  today.noTradeReason = noTradeReason; // keep latest as "primary" for list view
+  today.noTradeText = newText;
   today.closed = true;
   saveToday();
   renderTodayPanel();
 }
 
 function renderNoTradeClosed() {
-  document.getElementById('notrade-closed-reason').textContent = today.noTradeReason || '';
-  document.getElementById('notrade-closed-text').textContent = today.noTradeText || '(sin reflexión)';
+  const entries = today.noTradeEntries && today.noTradeEntries.length > 0
+    ? today.noTradeEntries
+    : [{ time: '—', reason: today.noTradeReason || '', text: today.noTradeText || '' }];
+
+  document.getElementById('notrade-closed-entries').innerHTML = entries.map(e => `
+    <div style="background:var(--surface2);padding:12px;border-radius:8px;margin-bottom:8px">
+      <div style="font-size:11px;color:var(--gold);font-weight:700;margin-bottom:4px">${e.time} · ${e.reason || ''}</div>
+      <div class="modal-text">${e.text || '(sin texto)'}</div>
+    </div>
+  `).join('');
+}
+
+function addAnotherReflection() {
+  noTradeReason = null;
+  document.querySelectorAll('#notrade-reasons .result-btn').forEach(b => { b.style.borderColor=''; b.style.background=''; b.style.color=''; });
+  document.getElementById('transcript-notrade').value = '';
+  document.getElementById('btn-save-notrade').disabled = true;
+  document.getElementById('panel-notrade-closed').style.display = 'none';
+  document.getElementById('panel-notrade').style.display = 'block';
 }
 
 // ========== CAPITAL MOVEMENT ==========
@@ -1007,17 +1034,20 @@ function showDetail(date) {
   document.getElementById('modal-date').textContent = date;
 
   if (d.noTrade) {
+    const entries = d.noTradeEntries && d.noTradeEntries.length > 0
+      ? d.noTradeEntries
+      : [{ time: '—', reason: d.noTradeReason || '', text: d.noTradeText || '' }];
     document.getElementById('modal-body').innerHTML = `
       <div class="modal-section">
         <div class="modal-section-title">Resultado</div>
-        <div class="modal-text">⚪ <strong>Día sin operar</strong> — ${d.noTradeReason || ''}</div>
+        <div class="modal-text">⚪ <strong>Día sin operar</strong></div>
       </div>
-      ${d.noTradeText ? `
+      ${entries.map(e => `
         <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px">
-          <div class="modal-section-title">Reflexión</div>
-          <div class="modal-text">${d.noTradeText}</div>
+          <div class="modal-section-title">${e.time} · ${e.reason || ''}</div>
+          <div class="modal-text">${e.text || '(sin texto)'}</div>
         </div>
-      ` : ''}
+      `).join('')}
       <button class="btn-danger" onclick="deleteHistoryDay('${date}')">✕ Borrar este registro</button>
     `;
     document.getElementById('modal-overlay').classList.add('active');
@@ -1146,19 +1176,24 @@ function exportToExcel() {
   sorted.forEach(d => {
     const dayPnl = (d.trades && d.trades.length > 0) ? calcPnL(d.trades) : 0;
     if (d.noTrade) {
-      rows.push({
-        'Fecha': d.date,
-        'Tipo': 'Sin operar',
-        'N° Trade': '',
-        'Estado emocional': '',
-        'Razón de entrada': '',
-        'Resultado': '',
-        'Monto ($)': '',
-        'SL corrido a BE': '',
-        'Sensación post-trade': '',
-        'Motivo no operar': d.noTradeReason || '',
-        'Reflexión': d.noTradeText || '',
-        'PnL del día ($)': 0
+      const entries = d.noTradeEntries && d.noTradeEntries.length > 0
+        ? d.noTradeEntries
+        : [{ time: '—', reason: d.noTradeReason || '', text: d.noTradeText || '' }];
+      entries.forEach(e => {
+        rows.push({
+          'Fecha': d.date,
+          'Tipo': 'Sin operar',
+          'N° Trade': '',
+          'Estado emocional': '',
+          'Razón de entrada': '',
+          'Resultado': '',
+          'Monto ($)': '',
+          'SL corrido a BE': '',
+          'Sensación post-trade': '',
+          'Motivo no operar': e.reason || '',
+          'Reflexión': e.text || '',
+          'PnL del día ($)': 0
+        });
       });
     } else if (d.trades && d.trades.length > 0) {
       d.trades.forEach((t, i) => {
