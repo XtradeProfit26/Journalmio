@@ -264,11 +264,16 @@
       <div class="divider"></div>
       <div class="stats-row" id="day-stats"></div>
     </div>
-    <div class="card">
+    <div class="card" id="summary-trades-card" style="display:none">
       <div class="card-title">Trades del día</div>
       <div id="trades-summary"></div>
     </div>
+    <div class="card" id="summary-reflections-card" style="display:none">
+      <div class="card-title">Momentos sin operar</div>
+      <div id="reflections-summary"></div>
+    </div>
     <button class="btn-primary" id="btn-new-trade" onclick="startNewTrade()">+ Nuevo trade</button>
+    <button class="btn-secondary" onclick="addAnotherReflection()">+ Registrar momento sin operar</button>
     <button class="btn-primary" id="btn-close-day" onclick="closeDay()" style="background:var(--green-dim);color:var(--green);border:1px solid var(--green)">✓ Cerrar día</button>
     <button class="btn-secondary" onclick="confirmResetDay()">↺ Reiniciar día</button>
   </div>
@@ -283,6 +288,10 @@
     <div class="card">
       <div class="card-title">Trades registrados</div>
       <div id="closed-trades"></div>
+    </div>
+    <div class="card" id="closed-reflections-card" style="display:none">
+      <div class="card-title">Momentos sin operar</div>
+      <div id="closed-reflections"></div>
     </div>
     <div style="font-size:12px;color:var(--text-dim);text-align:center;margin-bottom:10px">✓ Este día ya quedó guardado en tu historial</div>
     <button class="btn-secondary" onclick="goHome()">← Volver</button>
@@ -345,7 +354,7 @@
       </div>
       <textarea class="transcript-area" id="transcript-notrade" placeholder="¿Por qué no operaste hoy?"></textarea>
     </div>
-    <button class="btn-primary" id="btn-save-notrade" disabled onclick="saveNoTradeDay()">Guardar día →</button>
+    <button class="btn-primary" id="btn-save-notrade" disabled onclick="saveNoTradeDay()">Guardar reflexión →</button>
     <button class="btn-secondary" onclick="renderTodayPanel()">← Volver</button>
   </div>
 
@@ -481,11 +490,8 @@ function renderTodayPanel() {
 
   renderTradeDots();
 
-  if (today.noTrade) {
-    renderNoTradeClosed();
-    document.getElementById('panel-notrade-closed').style.display = 'block';
-    return;
-  }
+  const hasTrades = today.trades && today.trades.length > 0;
+  const hasReflections = today.noTrade && today.noTradeEntries && today.noTradeEntries.length > 0;
 
   if (today.closed) {
     renderClosedDay();
@@ -493,16 +499,15 @@ function renderTodayPanel() {
     return;
   }
 
-  if (today.trades.length === 0) {
+  if (!hasTrades && !hasReflections) {
     document.getElementById('panel-initial').style.display = 'block';
     return;
   }
 
-  // Show summary between trades
+  // Show combined summary (trades + reflections), day not yet closed
   renderDaySummary();
   document.getElementById('panel-summary').style.display = 'block';
 
-  // Update new trade button
   const btn = document.getElementById('btn-new-trade');
   if (btn) btn.style.display = today.trades.length >= 5 ? 'none' : 'block';
 }
@@ -647,7 +652,8 @@ function saveNoTradeDay() {
   today.noTrade = true;
   today.noTradeReason = noTradeReason; // keep latest as "primary" for list view
   today.noTradeText = newText;
-  today.closed = true;
+  // Day stays open — the person can still add trades afterward.
+  // It only gets marked "closed" when they explicitly close it.
   saveToday();
   renderTodayPanel();
 }
@@ -670,7 +676,10 @@ function addAnotherReflection() {
   document.querySelectorAll('#notrade-reasons .result-btn').forEach(b => { b.style.borderColor=''; b.style.background=''; b.style.color=''; });
   document.getElementById('transcript-notrade').value = '';
   document.getElementById('btn-save-notrade').disabled = true;
-  document.getElementById('panel-notrade-closed').style.display = 'none';
+  ['panel-summary','panel-notrade-closed','panel-initial','panel-closed'].forEach(p => {
+    const el = document.getElementById(p);
+    if (el) el.style.display = 'none';
+  });
   document.getElementById('panel-notrade').style.display = 'block';
 }
 
@@ -762,7 +771,7 @@ function saveTrade() {
 // ========== DAY SUMMARY ==========
 function renderDaySummary() {
   const pnl = calcPnL(today.trades);
-  const sem = calcSemaphore(today.trades);
+  const sem = today.trades.length > 0 ? calcSemaphore(today.trades) : { icon: '⚪', label: 'SIN TRADES TODAVÍA', sub: 'Solo reflexiones registradas', color: 'var(--text-dim)' };
 
   document.getElementById('day-semaphore').innerHTML = `
     <div class="sem-icon">${sem.icon}</div>
@@ -790,22 +799,57 @@ function renderDaySummary() {
     </div>
   `;
 
-  document.getElementById('trades-summary').innerHTML = today.trades.map((t, i) => {
-    const color = t.result === 'PROFIT' ? 'var(--green)' : t.result === 'SL' ? 'var(--red)' : 'var(--text-dim)';
-    const amt = t.result === 'PROFIT' ? `+$${parseFloat(t.amount).toFixed(2)}` : t.result === 'SL' ? '-$10.00' : '$0.00';
-    const be = t.be === true ? ' · BE ✓' : '';
-    return `<div class="trade-item">
-      <div class="trade-item-top">
-        <span class="trade-item-label">Trade ${i+1} · ${t.emotion}</span>
-        <span style="display:flex;align-items:center;gap:8px">
-          <span class="trade-item-result" style="color:${color}">${t.result} ${amt}${be}</span>
-          <span onclick="deleteTodayTrade(${i})" style="color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">✕</span>
-        </span>
+  const tradesCard = document.getElementById('summary-trades-card');
+  if (today.trades.length > 0) {
+    tradesCard.style.display = 'block';
+    document.getElementById('trades-summary').innerHTML = today.trades.map((t, i) => {
+      const color = t.result === 'PROFIT' ? 'var(--green)' : t.result === 'SL' ? 'var(--red)' : 'var(--text-dim)';
+      const amt = t.result === 'PROFIT' ? `+$${parseFloat(t.amount).toFixed(2)}` : t.result === 'SL' ? '-$10.00' : '$0.00';
+      const be = t.be === true ? ' · BE ✓' : '';
+      return `<div class="trade-item">
+        <div class="trade-item-top">
+          <span class="trade-item-label">Trade ${i+1} · ${t.emotion}</span>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span class="trade-item-result" style="color:${color}">${t.result} ${amt}${be}</span>
+            <span onclick="deleteTodayTrade(${i})" style="color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">✕</span>
+          </span>
+        </div>
+        ${t.reasonPre ? `<div class="trade-item-text">Antes: "${t.reasonPre.substring(0,80)}${t.reasonPre.length>80?'...':''}"</div>` : ''}
+        ${t.feelingPost ? `<div class="trade-item-text">Después: "${t.feelingPost.substring(0,80)}${t.feelingPost.length>80?'...':''}"</div>` : ''}
+      </div>`;
+    }).join('');
+  } else {
+    tradesCard.style.display = 'none';
+  }
+
+  const reflCard = document.getElementById('summary-reflections-card');
+  const hasRefl = today.noTrade && today.noTradeEntries && today.noTradeEntries.length > 0;
+  if (hasRefl) {
+    reflCard.style.display = 'block';
+    document.getElementById('reflections-summary').innerHTML = today.noTradeEntries.map((e, i) => `
+      <div class="trade-item">
+        <div class="trade-item-top">
+          <span class="trade-item-label">${e.time} · ${e.reason || ''}</span>
+          <span onclick="deleteTodayReflection(${i})" style="color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">✕</span>
+        </div>
+        <div class="trade-item-text">${e.text || '(sin texto)'}</div>
       </div>
-      ${t.reasonPre ? `<div class="trade-item-text">Antes: "${t.reasonPre.substring(0,80)}${t.reasonPre.length>80?'...':''}"</div>` : ''}
-      ${t.feelingPost ? `<div class="trade-item-text">Después: "${t.feelingPost.substring(0,80)}${t.feelingPost.length>80?'...':''}"</div>` : ''}
-    </div>`;
-  }).join('');
+    `).join('');
+  } else {
+    reflCard.style.display = 'none';
+  }
+}
+
+function deleteTodayReflection(index) {
+  if (!confirm('¿Borrar esta reflexión? No se puede deshacer.')) return;
+  today.noTradeEntries.splice(index, 1);
+  if (today.noTradeEntries.length === 0) {
+    today.noTrade = false;
+    today.noTradeReason = null;
+    today.noTradeText = '';
+  }
+  saveToday();
+  renderTodayPanel();
 }
 
 function deleteTodayTrade(index) {
@@ -842,7 +886,7 @@ function renderClosedDay() {
     </div>
   `;
 
-  document.getElementById('closed-trades').innerHTML = today.trades.map((t, i) => {
+  document.getElementById('closed-trades').innerHTML = today.trades.length > 0 ? today.trades.map((t, i) => {
     const color = t.result === 'PROFIT' ? 'var(--green)' : t.result === 'SL' ? 'var(--red)' : 'var(--text-dim)';
     const amt = t.result === 'PROFIT' ? `+$${parseFloat(t.amount).toFixed(2)}` : t.result === 'SL' ? '-$10.00' : '$0.00';
     return `<div class="trade-item">
@@ -856,7 +900,21 @@ function renderClosedDay() {
       ${t.reasonPre ? `<div class="trade-item-text">Antes: "${t.reasonPre.substring(0,100)}${t.reasonPre.length>100?'...':''}"</div>` : ''}
       ${t.feelingPost ? `<div class="trade-item-text">Después: "${t.feelingPost.substring(0,100)}${t.feelingPost.length>100?'...':''}"</div>` : ''}
     </div>`;
-  }).join('');
+  }).join('') : '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:10px">Sin trades este día</div>';
+
+  const reflSection = document.getElementById('closed-reflections-card');
+  const hasRefl = today.noTrade && today.noTradeEntries && today.noTradeEntries.length > 0;
+  if (hasRefl) {
+    reflSection.style.display = 'block';
+    document.getElementById('closed-reflections').innerHTML = today.noTradeEntries.map(e => `
+      <div class="trade-item">
+        <div class="trade-item-top"><span class="trade-item-label">${e.time} · ${e.reason || ''}</span></div>
+        <div class="trade-item-text">${e.text || '(sin texto)'}</div>
+      </div>
+    `).join('');
+  } else {
+    reflSection.style.display = 'none';
+  }
 }
 
 function deleteClosedTrade(date, index) {
@@ -997,9 +1055,9 @@ function renderHistory() {
   const list = document.getElementById('history-list');
   if (!list) return;
   let data = [...db].filter(d => (d.trades && d.trades.length > 0) || d.noTrade).reverse();
-  if (activeFilter === 'green') data = data.filter(d => !d.noTrade && getSemColor(d.trades) === 'green');
-  if (activeFilter === 'yellow') data = data.filter(d => !d.noTrade && getSemColor(d.trades) === 'yellow');
-  if (activeFilter === 'red') data = data.filter(d => !d.noTrade && getSemColor(d.trades) === 'red');
+  if (activeFilter === 'green') data = data.filter(d => d.trades && d.trades.length > 0 && getSemColor(d.trades) === 'green');
+  if (activeFilter === 'yellow') data = data.filter(d => d.trades && d.trades.length > 0 && getSemColor(d.trades) === 'yellow');
+  if (activeFilter === 'red') data = data.filter(d => d.trades && d.trades.length > 0 && getSemColor(d.trades) === 'red');
 
   if (data.length === 0) {
     list.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div>No hay registros todavía.</div>`;
@@ -1007,29 +1065,37 @@ function renderHistory() {
   }
 
   list.innerHTML = data.map(d => {
-    if (d.noTrade) {
+    const hasTrades = d.trades && d.trades.length > 0;
+    const hasRefl = d.noTrade && d.noTradeEntries && d.noTradeEntries.length > 0;
+
+    if (hasTrades) {
+      const sem = calcSemaphore(d.trades);
+      const pnl = calcPnL(d.trades);
+      const color = getSemColor(d.trades);
+      const badgeClass = color === 'green' ? 'badge-green' : color === 'red' ? 'badge-red' : color === 'yellow' ? 'badge-yellow' : 'badge-gray';
+      const reflNote = hasRefl ? ` · ${d.noTradeEntries.length} reflexión${d.noTradeEntries.length>1?'es':''}` : '';
       return `<div class="history-item" onclick="showDetail('${d.date}')">
         <div class="history-top">
           <span class="history-date">${d.date}</span>
-          <span class="history-badge badge-gray">⚪ SIN OPERAR</span>
+          <span class="history-badge ${badgeClass}">${sem.icon} ${sem.label}</span>
         </div>
         <div class="history-bottom">
-          <span>${d.noTradeReason || ''}</span>
+          <span>${d.trades.length} trade${d.trades.length > 1 ? 's' : ''}${reflNote}</span>
+          <span class="history-amount ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</span>
         </div>
       </div>`;
     }
-    const sem = calcSemaphore(d.trades);
-    const pnl = calcPnL(d.trades);
-    const color = getSemColor(d.trades);
-    const badgeClass = color === 'green' ? 'badge-green' : color === 'red' ? 'badge-red' : color === 'yellow' ? 'badge-yellow' : 'badge-gray';
+
+    // No trades, only reflections
+    const lastReason = d.noTradeEntries && d.noTradeEntries.length > 0 ? d.noTradeEntries[d.noTradeEntries.length-1].reason : (d.noTradeReason || '');
+    const count = d.noTradeEntries ? d.noTradeEntries.length : 1;
     return `<div class="history-item" onclick="showDetail('${d.date}')">
       <div class="history-top">
         <span class="history-date">${d.date}</span>
-        <span class="history-badge ${badgeClass}">${sem.icon} ${sem.label}</span>
+        <span class="history-badge badge-gray">⚪ SIN OPERAR</span>
       </div>
       <div class="history-bottom">
-        <span>${d.trades.length} trade${d.trades.length > 1 ? 's' : ''}</span>
-        <span class="history-amount ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</span>
+        <span>${lastReason}${count > 1 ? ` (+${count-1} más)` : ''}</span>
       </div>
     </div>`;
   }).join('');
@@ -1040,47 +1106,78 @@ function showDetail(date) {
   if (!d) return;
   document.getElementById('modal-date').textContent = date;
 
-  if (d.noTrade) {
-    const entries = d.noTradeEntries && d.noTradeEntries.length > 0
-      ? d.noTradeEntries
-      : [{ time: '—', reason: d.noTradeReason || '', text: d.noTradeText || '' }];
-    document.getElementById('modal-body').innerHTML = `
+  const hasTrades = d.trades && d.trades.length > 0;
+  const hasRefl = d.noTrade && d.noTradeEntries && d.noTradeEntries.length > 0;
+
+  let html = '';
+
+  if (hasTrades) {
+    const sem = calcSemaphore(d.trades);
+    const pnl = calcPnL(d.trades);
+    html += `
+      <div class="modal-section">
+        <div class="modal-section-title">Resultado</div>
+        <div class="modal-text">${sem.icon} <strong style="color:${sem.color}">${sem.label}</strong> — PnL: ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</div>
+      </div>
+      ${d.trades.map((t, i) => `
+        <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:8px">
+          <div class="modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>Trade ${i+1} · ${t.emotion} · ${t.result}</span>
+            <span onclick="deleteHistoryTrade('${date}',${i})" style="color:var(--red);cursor:pointer;font-size:13px">✕ Borrar</span>
+          </div>
+          ${t.reasonPre ? `<div class="modal-text" style="margin-bottom:6px"><strong>Antes:</strong> ${t.reasonPre}</div>` : ''}
+          ${t.feelingPost ? `<div class="modal-text"><strong>Después:</strong> ${t.feelingPost}</div>` : ''}
+        </div>
+      `).join('')}
+    `;
+  } else {
+    html += `
       <div class="modal-section">
         <div class="modal-section-title">Resultado</div>
         <div class="modal-text">⚪ <strong>Día sin operar</strong></div>
       </div>
-      ${entries.map(e => `
-        <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px">
-          <div class="modal-section-title">${e.time} · ${e.reason || ''}</div>
-          <div class="modal-text">${e.text || '(sin texto)'}</div>
-        </div>
-      `).join('')}
-      <button class="btn-danger" onclick="deleteHistoryDay('${date}')">✕ Borrar este registro</button>
     `;
-    document.getElementById('modal-overlay').classList.add('active');
-    return;
   }
 
-  const sem = calcSemaphore(d.trades);
-  const pnl = calcPnL(d.trades);
-  document.getElementById('modal-body').innerHTML = `
-    <div class="modal-section">
-      <div class="modal-section-title">Resultado</div>
-      <div class="modal-text">${sem.icon} <strong style="color:${sem.color}">${sem.label}</strong> — PnL: ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</div>
-    </div>
-    ${d.trades.map((t, i) => `
-      <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:8px">
+  if (hasRefl) {
+    html += `<div class="modal-section-title" style="margin-top:14px">Momentos sin operar</div>`;
+    html += d.noTradeEntries.map((e, i) => `
+      <div class="modal-section" style="background:var(--surface2);border-radius:8px;padding:10px">
         <div class="modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
-          <span>Trade ${i+1} · ${t.emotion} · ${t.result}</span>
-          <span onclick="deleteHistoryTrade('${date}',${i})" style="color:var(--red);cursor:pointer;font-size:13px">✕ Borrar</span>
+          <span>${e.time} · ${e.reason || ''}</span>
+          <span onclick="deleteHistoryReflection('${date}',${i})" style="color:var(--red);cursor:pointer;font-size:13px">✕ Borrar</span>
         </div>
-        ${t.reasonPre ? `<div class="modal-text" style="margin-bottom:6px"><strong>Antes:</strong> ${t.reasonPre}</div>` : ''}
-        ${t.feelingPost ? `<div class="modal-text"><strong>Después:</strong> ${t.feelingPost}</div>` : ''}
+        <div class="modal-text">${e.text || '(sin texto)'}</div>
       </div>
-    `).join('')}
-    <button class="btn-danger" onclick="deleteHistoryDay('${date}')">✕ Borrar día completo</button>
-  `;
+    `).join('');
+  }
+
+  html += `<button class="btn-danger" onclick="deleteHistoryDay('${date}')">✕ Borrar día completo</button>`;
+
+  document.getElementById('modal-body').innerHTML = html;
   document.getElementById('modal-overlay').classList.add('active');
+}
+
+function deleteHistoryReflection(date, index) {
+  if (!confirm('¿Borrar esta reflexión? No se puede deshacer.')) return;
+  const dayIdx = db.findIndex(d => d.date === date);
+  if (dayIdx < 0) return;
+  db[dayIdx].noTradeEntries.splice(index, 1);
+  if (db[dayIdx].noTradeEntries.length === 0) {
+    db[dayIdx].noTrade = false;
+    db[dayIdx].noTradeReason = null;
+    db[dayIdx].noTradeText = '';
+  }
+  const stillHasTrades = db[dayIdx].trades && db[dayIdx].trades.length > 0;
+  if (!stillHasTrades && !db[dayIdx].noTrade) {
+    db.splice(dayIdx, 1);
+    document.getElementById('modal-overlay').classList.remove('active');
+  }
+  localStorage.setItem('tj_db', JSON.stringify(db));
+  if (date === today.date) today = db.find(d => d.date === date) || { date: todayStr(), trades: [], closed: false };
+  renderHistory();
+  renderTodayPanel();
+  if (db.find(d => d.date === date)) showDetail(date);
 }
 
 function deleteHistoryTrade(date, index) {
@@ -1182,27 +1279,8 @@ function exportToExcel() {
 
   sorted.forEach(d => {
     const dayPnl = (d.trades && d.trades.length > 0) ? calcPnL(d.trades) : 0;
-    if (d.noTrade) {
-      const entries = d.noTradeEntries && d.noTradeEntries.length > 0
-        ? d.noTradeEntries
-        : [{ time: '—', reason: d.noTradeReason || '', text: d.noTradeText || '' }];
-      entries.forEach(e => {
-        rows.push({
-          'Fecha': d.date,
-          'Tipo': 'Sin operar',
-          'N° Trade': '',
-          'Estado emocional': '',
-          'Razón de entrada': '',
-          'Resultado': '',
-          'Monto ($)': '',
-          'SL corrido a BE': '',
-          'Sensación post-trade': '',
-          'Motivo no operar': e.reason || '',
-          'Reflexión': e.text || '',
-          'PnL del día ($)': 0
-        });
-      });
-    } else if (d.trades && d.trades.length > 0) {
+
+    if (d.trades && d.trades.length > 0) {
       d.trades.forEach((t, i) => {
         const monto = t.result === 'PROFIT' ? parseFloat(t.amount || 0) : t.result === 'SL' ? -10 : 0;
         rows.push({
@@ -1217,6 +1295,25 @@ function exportToExcel() {
           'Sensación post-trade': t.feelingPost || '',
           'Motivo no operar': '',
           'Reflexión': '',
+          'PnL del día ($)': dayPnl
+        });
+      });
+    }
+
+    if (d.noTrade && d.noTradeEntries && d.noTradeEntries.length > 0) {
+      d.noTradeEntries.forEach(e => {
+        rows.push({
+          'Fecha': d.date,
+          'Tipo': 'Sin operar',
+          'N° Trade': '',
+          'Estado emocional': '',
+          'Razón de entrada': '',
+          'Resultado': '',
+          'Monto ($)': '',
+          'SL corrido a BE': '',
+          'Sensación post-trade': '',
+          'Motivo no operar': e.reason || '',
+          'Reflexión': e.text || '',
           'PnL del día ($)': dayPnl
         });
       });
