@@ -92,6 +92,7 @@
   .input-label { font-size: 12px; color: var(--text-dim); min-width: 80px; }
   .input-field { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 15px; font-family: var(--mono); outline: none; max-width: 130px; }
   .input-field:focus { border-color: var(--gold); }
+  input[type="date"].input-field, input[type="time"].input-field { color-scheme: dark; }
 
   /* Toggle */
   .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
@@ -551,6 +552,17 @@
         <div class="section-title">Evento / Noticia</div>
       </div>
 
+      <div style="display:flex;gap:10px;margin-bottom:14px">
+        <div style="flex:1">
+          <div class="field-label">Fecha</div>
+          <input type="date" class="input-field" id="news-fecha" style="max-width:none;width:100%" onchange="newsSetFecha(this.value)">
+        </div>
+        <div style="flex:1">
+          <div class="field-label">Hora</div>
+          <input type="time" class="input-field" id="news-hora" style="max-width:none;width:100%" onchange="newsSetHora(this.value)">
+        </div>
+      </div>
+
       <div class="field-label">Sesión</div>
       <div class="chip-select" id="news-sesion-group">
         <div class="chip" data-val="Asia" onclick="newsSelectChip(this,'sesion')">Asia</div>
@@ -568,7 +580,7 @@
       </div>
 
       <div class="field-label">Categoría (<span id="news-cat-asset-lbl">XAUUSD</span>)</div>
-      <div class="chip-select" id="news-categoria-group"></div>
+      <select class="input-field" id="news-categoria-select" style="max-width:none;width:100%" onchange="newsOnCategorySelect(this.value)"></select>
 
       <div class="field-label">Evento / Noticia (texto corto)</div>
       <textarea class="news-textarea" id="news-evento-texto" placeholder="Ej: PCE mayo salió por encima de lo esperado..."></textarea>
@@ -1872,13 +1884,95 @@ function exportToExcel() {
 }
 
 // ========== NOTICIAS ==========
+// Seed inicial de prueba (solo se aplica una vez, si tj_news todavía no existe en este dispositivo)
+if (localStorage.getItem('tj_news') === null) {
+  const seedNews = [
+    {
+      id: 1750960800000,
+      fecha: '26/06/2026', hora: '14:30',
+      activo: 'XAU',
+      sesion: 'NY', tipoEvento: 'Programado', categoriaEvento: 'CPI/PCE',
+      eventoTexto: 'PCE mayo salió por encima de lo esperado (hawkish). Lectura fundamental bajista para oro.',
+      sentimentIA: -2, confianzaIA: 4,
+      rsi: 31, emaVsPrice: null, tendenciaEma: null,
+      fibNivel: null, fibMarco: null,
+      dxy: 0.35, us10y: 0.04,
+      flujoETF: null, correlacionNasdaq: null,
+      direccionOperada: 'Compra', precioEntrada: 3975.00, precioSalida: 3995.00,
+      riesgoPips: 200, resultadoPips: 20.00, resultadoPct: 0.50, rMultiplo: 0.1,
+      coincidioSentiment: 'No',
+      notas: 'PRUEBA — Sentiment fundamental fue bajista y se cumplió en el dato, pero la operación ganadora fue técnica: rebote en Fibonacci 3.975 + liquidación de stops en zona FVG. No siguió el sentiment, siguió la técnica.'
+    },
+    {
+      id: 1750964400000,
+      fecha: '26/06/2026', hora: '15:30',
+      activo: 'BTC',
+      sesion: 'NY', tipoEvento: 'Posicionamiento institucional', categoriaEvento: 'Flujos ETF spot BTC',
+      eventoTexto: 'PRUEBA — registro de validación del wizard BTC, salida de prueba desde el celular.',
+      sentimentIA: -1, confianzaIA: 3,
+      rsi: 38, emaVsPrice: null, tendenciaEma: null,
+      fibNivel: null, fibMarco: null,
+      dxy: null, us10y: null,
+      flujoETF: 'Negativo', correlacionNasdaq: 'Alta (mismo sentido)',
+      direccionOperada: 'Venta', precioEntrada: 60500, precioSalida: 59800,
+      riesgoPips: 200, resultadoPips: 700, resultadoPct: 1.16, rMultiplo: 3.5,
+      coincidioSentiment: 'Sí',
+      notas: 'PRUEBA — registro ilustrativo, no es una operación real.'
+    },
+    {
+      id: 1750881600000,
+      fecha: '25/06/2026', hora: '18:00',
+      activo: 'BTC',
+      sesion: 'NY', tipoEvento: 'Posicionamiento institucional', categoriaEvento: 'Flujos ETF spot BTC',
+      eventoTexto: 'BTC cayó a ~58-59k, 5to día consecutivo de salidas de ETF spot (-469M total, IBIT -239M), sumado a liquidaciones de apalancamiento (+600M) y contexto Fed hawkish.',
+      sentimentIA: -2, confianzaIA: 4,
+      rsi: null, emaVsPrice: null, tendenciaEma: null,
+      fibNivel: null, fibMarco: null,
+      dxy: null, us10y: null,
+      flujoETF: 'Negativo', correlacionNasdaq: 'Alta (mismo sentido)',
+      direccionOperada: 'Sin operar', precioEntrada: null, precioSalida: null,
+      riesgoPips: 200, resultadoPips: null, resultadoPct: null, rMultiplo: null,
+      coincidioSentiment: null,
+      notas: 'Registro real (no operado). 5to día consecutivo de outflows ETF, IBIT como principal contribuyente. Liquidaciones de apalancamiento aceleraron la baja. Confirma catálogo BTC propuesto: Flujos ETF spot + Liquidaciones apalancadas como categorías de alto impacto.'
+    }
+  ];
+  localStorage.setItem('tj_news', JSON.stringify(seedNews));
+}
+
 let newsDb = JSON.parse(localStorage.getItem('tj_news') || '[]');
+
+// Migración: notas pasa de string único a bitácora (array de {fecha, texto})
+let newsMigrated = false;
+newsDb.forEach(e => {
+  if (typeof e.notas === 'string') {
+    e.notas = e.notas.trim() ? [{ fecha: `${e.fecha} ${e.hora}`, texto: e.notas.trim() }] : [];
+    newsMigrated = true;
+  }
+  if (!Array.isArray(e.notas)) e.notas = [];
+});
+if (newsMigrated) localStorage.setItem('tj_news', JSON.stringify(newsDb));
 let newsFilterActiveAsset = 'XAU';
 
 const NEWS_CATEGORIES = {
   XAU: ['FOMC/Fed', 'CPI/PCE', 'NFP', 'Discurso Fed', 'Tasa de interés (BoJ/BCE/etc)', 'Shock geopolítico', 'Flujos ETF oro', 'Compras banco central', 'COT Report', 'Otro'],
   BTC: ['Flujos ETF spot BTC', 'Concentración de flujo (IBIT)', 'Regulación (SEC/Clarity Act)', 'Correlación Nasdaq/risk assets', 'FOMC/Fed', 'On-chain (ballenas/holders)', 'Liquidaciones apalancadas', 'Otro']
 };
+
+let newsCustomCategories = JSON.parse(localStorage.getItem('tj_news_custom_cats') || '{"XAU":[],"BTC":[]}');
+
+function newsAllCategories(asset) {
+  return [...NEWS_CATEGORIES[asset], ...newsCustomCategories[asset]];
+}
+
+function newsAddCustomCategory(asset, nombre) {
+  nombre = nombre.trim();
+  if (!nombre) return false;
+  const existe = newsAllCategories(asset).some(c => c.toLowerCase() === nombre.toLowerCase());
+  if (existe) return false;
+  newsCustomCategories[asset].push(nombre);
+  localStorage.setItem('tj_news_custom_cats', JSON.stringify(newsCustomCategories));
+  return true;
+}
 
 let newsCurrentEntry = null; // entry being built in the wizard
 
@@ -1896,14 +1990,52 @@ function newsBlankEntry() {
     flujoETF: null, correlacionNasdaq: null,
     direccionOperada: null, precioEntrada: null, precioSalida: null,
     riesgoPips: 200, resultadoPips: null, resultadoPct: null, rMultiplo: null,
-    coincidioSentiment: null, notas: ''
+    coincidioSentiment: null, notas: []
   };
+}
+
+function newsDDMMYYYYtoISO(str) {
+  const [d, m, y] = str.split('/').map(Number);
+  return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+
+function newsISOtoDDMMYYYY(iso) {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function newsSetFecha(isoVal) {
+  if (!isoVal || !newsCurrentEntry) return;
+  newsCurrentEntry.fecha = newsISOtoDDMMYYYY(isoVal);
+}
+
+function newsSetHora(val) {
+  if (!val || !newsCurrentEntry) return;
+  newsCurrentEntry.hora = val;
+}
+
+function newsTo24h(horaStr) {
+  // Ya viene en 24h "HH:MM" (p.ej. cargado desde un registro guardado)
+  let m = horaStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (m) return `${String(m[1]).padStart(2,'0')}:${m[2]}`;
+  // Formato es-AR de toLocaleTimeString: "08:25 p. m." / "08:25 a. m."
+  m = horaStr.match(/^(\d{1,2}):(\d{2})\s*([ap])\.?\s*m\.?/i);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const isPM = m[3].toLowerCase() === 'p';
+    if (isPM && h !== 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+    return `${String(h).padStart(2,'0')}:${m[2]}`;
+  }
+  return '00:00';
 }
 
 function newsStartNew() {
   newsCurrentEntry = newsBlankEntry();
   newsRenderCategoryChips();
   newsResetStepUI();
+  document.getElementById('news-fecha').value = newsDDMMYYYYtoISO(newsCurrentEntry.fecha);
+  document.getElementById('news-hora').value = newsTo24h(newsCurrentEntry.hora);
   document.getElementById('news-panel-list').style.display = 'none';
   document.getElementById('news-panel-step1').style.display = 'block';
   document.getElementById('news-panel-step2').style.display = 'none';
@@ -1946,9 +2078,33 @@ function newsSetAsset(asset) {
 
 function newsRenderCategoryChips() {
   const asset = newsCurrentEntry.activo;
-  const cats = NEWS_CATEGORIES[asset];
-  const container = document.getElementById('news-categoria-group');
-  container.innerHTML = cats.map(c => `<div class="chip" data-val="${c}" onclick="newsSelectChip(this,'categoriaEvento')">${c}</div>`).join('');
+  const cats = newsAllCategories(asset);
+  const select = document.getElementById('news-categoria-select');
+  const actual = newsCurrentEntry.categoriaEvento;
+  select.innerHTML =
+    `<option value="" ${!actual ? 'selected' : ''} disabled>Elegí una categoría...</option>` +
+    cats.map(c => `<option value="${c}" ${c === actual ? 'selected' : ''}>${c}</option>`).join('') +
+    `<option value="__nueva__">+ Agregar categoría nueva...</option>`;
+}
+
+function newsOnCategorySelect(val) {
+  if (val === '__nueva__') {
+    const nombre = prompt('Nombre de la nueva categoría:');
+    if (nombre && nombre.trim()) {
+      const agregada = newsAddCustomCategory(newsCurrentEntry.activo, nombre.trim());
+      newsCurrentEntry.categoriaEvento = nombre.trim();
+      newsRenderCategoryChips();
+      if (!agregada) {
+        // Ya existía (mismo nombre case-insensitive); igual queda seleccionada
+      }
+    } else {
+      // Canceló: volver a "sin selección"
+      newsCurrentEntry.categoriaEvento = null;
+      newsRenderCategoryChips();
+    }
+    return;
+  }
+  newsCurrentEntry.categoriaEvento = val;
 }
 
 function newsSelectChip(el, field) {
@@ -2034,7 +2190,8 @@ function newsSave() {
   newsCurrentEntry.rsi = document.getElementById('news-rsi').value ? parseFloat(document.getElementById('news-rsi').value) : null;
   newsCurrentEntry.dxy = document.getElementById('news-dxy').value ? parseFloat(document.getElementById('news-dxy').value) : null;
   newsCurrentEntry.us10y = document.getElementById('news-us10y').value ? parseFloat(document.getElementById('news-us10y').value) : null;
-  newsCurrentEntry.notas = document.getElementById('news-notas').value;
+  const notaInicial = document.getElementById('news-notas').value.trim();
+  newsCurrentEntry.notas = notaInicial ? [{ fecha: `${newsCurrentEntry.fecha} ${newsCurrentEntry.hora}`, texto: notaInicial }] : [];
 
   newsDb.push(newsCurrentEntry);
   localStorage.setItem('tj_news', JSON.stringify(newsDb));
@@ -2098,44 +2255,298 @@ function renderNewsList() {
   }).join('');
 }
 
+let newsEditingEntry = null; // referencia directa al objeto de newsDb que se está editando
+
+function newsEditChipGroup(field, opciones, valorActual) {
+  return opciones.map(op =>
+    `<div class="chip ${op === valorActual ? 'sel' : ''}" onclick="newsEditSetField('${field}','${op.replace(/'/g,"\\'")}', this)">${op}</div>`
+  ).join('');
+}
+
+function newsEditScaleGroup(field, opciones, valorActual) {
+  return opciones.map(op =>
+    `<div class="scale-btn ${String(op) === String(valorActual) ? 'sel' : ''}" onclick="newsEditSetField('${field}', ${op}, this, true)">${op > 0 ? '+'+op : op}</div>`
+  ).join('');
+}
+
+function newsEditSetField(field, val, el, isNumber) {
+  if (!newsEditingEntry) return;
+  newsEditingEntry[field] = isNumber ? Number(val) : val;
+  const group = el.parentElement;
+  group.querySelectorAll('.chip, .scale-btn').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  newsEditPersist();
+  if (field === 'categoriaEvento' || field === 'tipoEvento' || field === 'sesion') return;
+  if (field === 'direccionOperada') newsEditRenderBody(); // puede mostrar/ocultar precios
+}
+
+function newsEditSetText(field, val) {
+  if (!newsEditingEntry) return;
+  newsEditingEntry[field] = val;
+  newsEditPersist();
+}
+
+function newsEditSetNumber(field, val) {
+  if (!newsEditingEntry) return;
+  newsEditingEntry[field] = val === '' ? null : parseFloat(val);
+  newsEditPersist();
+  if (['precioEntrada','precioSalida','riesgoPips'].includes(field)) newsEditCalcResultado();
+}
+
+function newsEditCalcResultado() {
+  const entrada = newsEditingEntry.precioEntrada;
+  const salida = newsEditingEntry.precioSalida;
+  const riesgo = newsEditingEntry.riesgoPips || 200;
+  const preview = document.getElementById('edit-resultado-preview');
+  if (!preview) return;
+
+  if (entrada === null || salida === null || isNaN(entrada) || isNaN(salida) ||
+      !newsEditingEntry.direccionOperada || newsEditingEntry.direccionOperada === 'Sin operar') {
+    preview.textContent = '—';
+    newsEditingEntry.resultadoPips = null;
+    newsEditingEntry.resultadoPct = null;
+    newsEditingEntry.rMultiplo = null;
+    newsEditPersist();
+    return;
+  }
+
+  const dirMult = newsEditingEntry.direccionOperada === 'Compra' ? 1 : -1;
+  const deltaPrecio = (salida - entrada) * dirMult;
+  const pips = deltaPrecio;
+  const pct = (deltaPrecio / entrada) * 100;
+  const rMult = riesgo > 0 ? (pips / riesgo) : null;
+
+  newsEditingEntry.resultadoPips = pips;
+  newsEditingEntry.resultadoPct = pct;
+  newsEditingEntry.rMultiplo = rMult;
+  newsEditPersist();
+
+  const sign = pips >= 0 ? '+' : '';
+  preview.innerHTML = `<span style="color:${pips >= 0 ? 'var(--green)' : 'var(--red)'}">${sign}${pips.toFixed(2)} (${sign}${pct.toFixed(2)}%) · R ${rMult !== null ? rMult.toFixed(1) : '—'}</span>`;
+}
+
+function newsEditSetFecha(isoVal) {
+  if (!isoVal || !newsEditingEntry) return;
+  newsEditingEntry.fecha = newsISOtoDDMMYYYY(isoVal);
+  newsEditPersist();
+}
+
+function newsEditSetHora(val) {
+  if (!val || !newsEditingEntry) return;
+  newsEditingEntry.hora = val;
+  newsEditPersist();
+}
+
+function newsEditOnCategorySelect(val) {
+  if (val === '__nueva__') {
+    const nombre = prompt('Nombre de la nueva categoría:');
+    if (nombre && nombre.trim()) {
+      newsAddCustomCategory(newsEditingEntry.activo, nombre.trim());
+      newsEditingEntry.categoriaEvento = nombre.trim();
+    }
+    newsEditPersist();
+    newsEditRenderBody();
+    return;
+  }
+  newsEditingEntry.categoriaEvento = val;
+  newsEditPersist();
+}
+
+function newsEditAddNota() {
+  const input = document.getElementById('edit-nota-nueva');
+  const texto = input.value.trim();
+  if (!texto) return;
+  const ahora = new Date();
+  const fechaStr = `${todayStr()} ${String(ahora.getHours()).padStart(2,'0')}:${String(ahora.getMinutes()).padStart(2,'0')}`;
+  newsEditingEntry.notas.unshift({ fecha: fechaStr, texto });
+  input.value = '';
+  newsEditPersist();
+  newsEditRenderNotas();
+}
+
+function newsEditRenderNotas() {
+  const cont = document.getElementById('edit-notas-list');
+  if (!cont) return;
+  if (newsEditingEntry.notas.length === 0) {
+    cont.innerHTML = `<div style="color:var(--text-dim);font-size:13px;padding:8px 0">Todavía no hay notas en este registro.</div>`;
+    return;
+  }
+  cont.innerHTML = newsEditingEntry.notas.map(n => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:3px">${n.fecha}</div>
+      <div style="font-size:14px;line-height:1.5">${n.texto}</div>
+    </div>
+  `).join('');
+}
+
+function newsEditPersist() {
+  localStorage.setItem('tj_news', JSON.stringify(newsDb));
+}
+
+function newsEditRenderBody() {
+  const e = newsEditingEntry;
+  const asset = e.activo;
+  document.getElementById('news-modal-date').textContent = `${e.fecha} · ${e.hora}`;
+
+  document.getElementById('news-modal-body').innerHTML = `
+    <div class="modal-section">
+      <div class="modal-section-title">Activo</div>
+      <div class="result-grid">
+        <button class="result-btn ${asset==='XAU'?'sel-PROFIT':''}" onclick="newsEditSetAsset('XAU')">XAUUSD</button>
+        <button class="result-btn ${asset==='BTC'?'sel-PROFIT':''}" onclick="newsEditSetAsset('BTC')">BTCUSD</button>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Fecha / Hora</div>
+      <div style="display:flex;gap:10px">
+        <input type="date" class="input-field" style="max-width:none;width:100%" value="${newsDDMMYYYYtoISO(e.fecha)}" onchange="newsEditSetFecha(this.value)">
+        <input type="time" class="input-field" style="max-width:none;width:100%" value="${newsTo24h(e.hora)}" onchange="newsEditSetHora(this.value)">
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Sesión</div>
+      <div class="chip-select">${newsEditChipGroup('sesion', ['Asia','Londres','NY','Solapamiento Londres-NY'], e.sesion)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Tipo de evento</div>
+      <div class="chip-select">${newsEditChipGroup('tipoEvento', ['Programado','Geopolítico (no programado)','Posicionamiento institucional','Sin evento relevante'], e.tipoEvento)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Categoría (${asset === 'XAU' ? 'XAUUSD' : 'BTCUSD'})</div>
+      <select class="input-field" style="max-width:none;width:100%" onchange="newsEditOnCategorySelect(this.value)">
+        <option value="" ${!e.categoriaEvento?'selected':''} disabled>Elegí una categoría...</option>
+        ${newsAllCategories(asset).map(c => `<option value="${c}" ${c===e.categoriaEvento?'selected':''}>${c}</option>`).join('')}
+        <option value="__nueva__">+ Agregar categoría nueva...</option>
+      </select>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Evento / Noticia</div>
+      <textarea class="news-textarea" oninput="newsEditSetText('eventoTexto', this.value)">${e.eventoTexto || ''}</textarea>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Sentiment IA (-2 a +2)</div>
+      <div class="scale-row">${newsEditScaleGroup('sentimentIA', [-2,-1,0,1,2], e.sentimentIA)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Confianza IA (1-5)</div>
+      <div class="scale-row">${newsEditScaleGroup('confianzaIA', [1,2,3,4,5], e.confianzaIA)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">RSI (14)</div>
+      <input type="number" class="input-field" style="max-width:none;width:100%" value="${e.rsi ?? ''}" placeholder="Ej: 28" oninput="newsEditSetNumber('rsi', this.value)">
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">EMA21 vs Precio</div>
+      <div class="chip-select">${newsEditChipGroup('emaVsPrice', ['Precio > EMA21','Precio < EMA21'], e.emaVsPrice)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Tendencia EMA</div>
+      <div class="chip-select">${newsEditChipGroup('tendenciaEma', ['Alcista','Bajista','Lateral'], e.tendenciaEma)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Nivel Fibonacci</div>
+      <div class="chip-select">${newsEditChipGroup('fibNivel', ['23.6%','38.2%','50%','61.8%','70%','78.6%','Ninguno'], e.fibNivel)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Marco temporal Fibonacci</div>
+      <div class="chip-select">${newsEditChipGroup('fibMarco', ['M15','H1','H4','Diario','Semanal'], e.fibMarco)}</div>
+    </div>
+
+    ${asset === 'XAU' ? `
+    <div class="modal-section">
+      <div class="modal-section-title">DXY — variación del día (%)</div>
+      <input type="number" class="input-field" style="max-width:none;width:100%" step="0.01" value="${e.dxy ?? ''}" oninput="newsEditSetNumber('dxy', this.value)">
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">US10Y — variación del día (%)</div>
+      <input type="number" class="input-field" style="max-width:none;width:100%" step="0.01" value="${e.us10y ?? ''}" oninput="newsEditSetNumber('us10y', this.value)">
+    </div>
+    ` : `
+    <div class="modal-section">
+      <div class="modal-section-title">Flujo ETF spot BTC</div>
+      <div class="chip-select">${newsEditChipGroup('flujoETF', ['Positivo','Negativo','Neutral'], e.flujoETF)}</div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">Correlación con Nasdaq</div>
+      <div class="chip-select">${newsEditChipGroup('correlacionNasdaq', ['Alta (mismo sentido)','Baja / desacoplado'], e.correlacionNasdaq)}</div>
+    </div>
+    `}
+
+    <div class="modal-section">
+      <div class="modal-section-title">Dirección operada</div>
+      <div class="result-grid">${['Compra','Venta','Sin operar'].map(d =>
+        `<button class="result-btn ${e.direccionOperada===d?'sel-PROFIT':''}" onclick="newsEditSetField('direccionOperada','${d}', this)">${d}</button>`
+      ).join('')}</div>
+    </div>
+
+    ${e.direccionOperada && e.direccionOperada !== 'Sin operar' ? `
+    <div class="modal-section">
+      <div class="input-row"><div class="input-label">Entrada</div>
+        <input type="number" class="input-field" step="0.01" value="${e.precioEntrada ?? ''}" oninput="newsEditSetNumber('precioEntrada', this.value)"></div>
+      <div class="input-row"><div class="input-label">Salida</div>
+        <input type="number" class="input-field" step="0.01" value="${e.precioSalida ?? ''}" oninput="newsEditSetNumber('precioSalida', this.value)"></div>
+      <div class="input-row"><div class="input-label">Riesgo (pips)</div>
+        <input type="number" class="input-field" value="${e.riesgoPips ?? 200}" oninput="newsEditSetNumber('riesgoPips', this.value)"></div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:13px;display:flex;justify-content:space-between">
+        <span style="color:var(--text-dim)">Resultado</span>
+        <span id="edit-resultado-preview" style="font-family:var(--mono);font-weight:700">—</span>
+      </div>
+    </div>
+    ` : ''}
+
+    <div class="modal-section">
+      <div class="modal-section-title">¿Coincidió el sentiment con el resultado?</div>
+      <div class="chip-select">${newsEditChipGroup('coincidioSentiment', ['Sí','No','Parcial','N/A'], e.coincidioSentiment)}</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Bitácora de notas</div>
+      <div style="display:flex;gap:8px;margin-bottom:4px">
+        <input type="text" class="input-field" id="edit-nota-nueva" style="max-width:none;width:100%" placeholder="Agregar una nota con fecha y hora...">
+        <button class="btn-secondary" style="width:auto;margin-top:0;padding:10px 16px" onclick="newsEditAddNota()">Agregar</button>
+      </div>
+      <div id="edit-notas-list"></div>
+    </div>
+
+    <button class="btn-danger" onclick="deleteNewsEntry(${e.id})">Eliminar registro</button>
+  `;
+
+  newsEditRenderNotas();
+  if (e.direccionOperada && e.direccionOperada !== 'Sin operar') newsEditCalcResultado();
+}
+
+function newsEditSetAsset(asset) {
+  newsEditingEntry.activo = asset;
+  // La categoría puede no existir en el set del nuevo activo: la dejamos, el select la mostrará si coincide, sino queda en blanco visualmente pero el dato persiste
+  newsEditPersist();
+  newsEditRenderBody();
+}
+
 function showNewsDetail(id) {
   const e = newsDb.find(x => x.id === id);
   if (!e) return;
-  document.getElementById('news-modal-date').textContent = `${e.fecha} · ${e.hora}`;
-  document.getElementById('news-modal-body').innerHTML = `
-    <div class="modal-section">
-      <div class="modal-section-title">Activo / Categoría</div>
-      <div class="modal-text">${e.activo === 'XAU' ? 'XAUUSD' : 'BTCUSD'} — ${e.categoriaEvento || '—'} (${e.tipoEvento || '—'})</div>
-    </div>
-    <div class="modal-section">
-      <div class="modal-section-title">Evento</div>
-      <div class="modal-text">${e.eventoTexto || '—'}</div>
-    </div>
-    <div class="modal-section">
-      <div class="modal-section-title">Sentiment / Confianza IA</div>
-      <div class="modal-text">${e.sentimentIA !== null ? e.sentimentIA : '—'} / ${e.confianzaIA !== null ? e.confianzaIA : '—'}</div>
-    </div>
-    <div class="modal-section">
-      <div class="modal-section-title">Técnico</div>
-      <div class="modal-text">RSI ${e.rsi ?? '—'} · ${e.emaVsPrice || '—'} · Tendencia ${e.tendenciaEma || '—'}<br>Fibonacci ${e.fibNivel || '—'} (${e.fibMarco || '—'})
-      ${e.activo === 'XAU' ? `<br>DXY ${e.dxy ?? '—'}% · US10Y ${e.us10y ?? '—'}%` : `<br>Flujo ETF: ${e.flujoETF || '—'} · Correl. Nasdaq: ${e.correlacionNasdaq || '—'}`}</div>
-    </div>
-    <div class="modal-section">
-      <div class="modal-section-title">Resultado</div>
-      <div class="modal-text">${e.direccionOperada || '—'}${e.precioEntrada ? ` · Entrada ${e.precioEntrada} → Salida ${e.precioSalida}` : ''}${e.resultadoPct !== null && e.resultadoPct !== undefined ? `<br>${e.resultadoPips >= 0 ? '+' : ''}${e.resultadoPips.toFixed(2)} pips (${e.resultadoPct >= 0 ? '+' : ''}${e.resultadoPct.toFixed(2)}%) · R ${e.rMultiplo !== null ? e.rMultiplo.toFixed(1) : '—'}` : ''}<br>¿Coincidió sentiment? ${e.coincidioSentiment || '—'}</div>
-    </div>
-    <div class="modal-section">
-      <div class="modal-section-title">Notas</div>
-      <div class="modal-text">${e.notas || '(sin notas)'}</div>
-    </div>
-    <button class="btn-danger" onclick="deleteNewsEntry(${e.id})">Eliminar registro</button>
-  `;
+  newsEditingEntry = e;
+  newsEditRenderBody();
   document.getElementById('news-modal-overlay').classList.add('active');
 }
 
 function closeNewsModal(e) {
   if (e.target.id === 'news-modal-overlay') {
     document.getElementById('news-modal-overlay').classList.remove('active');
+    newsEditingEntry = null;
+    renderNewsList();
   }
 }
 
@@ -2144,6 +2555,7 @@ function deleteNewsEntry(id) {
   newsDb = newsDb.filter(e => e.id !== id);
   localStorage.setItem('tj_news', JSON.stringify(newsDb));
   document.getElementById('news-modal-overlay').classList.remove('active');
+  newsEditingEntry = null;
   renderNewsList();
 }
 
@@ -2167,7 +2579,7 @@ function exportNewsToExcel() {
     'Resultado (pips)': e.resultadoPips ?? '', 'Resultado (%)': e.resultadoPct !== null && e.resultadoPct !== undefined ? e.resultadoPct.toFixed(2) : '',
     'R Múltiplo': e.rMultiplo !== null && e.rMultiplo !== undefined ? e.rMultiplo.toFixed(2) : '',
     '¿Coincidió Sentiment?': e.coincidioSentiment || '',
-    'Notas': e.notas || ''
+    'Notas': (e.notas || []).map(n => `[${n.fecha}] ${n.texto}`).join(' | ')
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [
