@@ -225,6 +225,9 @@
 <!-- ===== HOY ===== -->
 <div class="screen active" id="screen-hoy">
 
+  <!-- Objetivo de hoy (plan de proyección fijo) -->
+  <div class="card" id="today-objective-box" style="background:var(--surface2);border-color:var(--gold)"></div>
+
   <!-- Trade counter dots -->
   <div class="trade-counter" id="trade-counter"></div>
 
@@ -510,6 +513,7 @@
       <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--text-dim)">Pérdida máx/día</span><span style="font-weight:700;color:var(--red)">$50</span></div>
       <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--text-dim)">Proyección diaria</span><span style="font-weight:700;color:var(--green)" id="resumen-current-pct">1.4%</span></div>
     </div>
+    <button class="btn-secondary" onclick="showProjectionTable()">Ver plan de proyección 2026</button>
   </div>
   <div class="card">
     <div class="card-title">Últimos 30 días</div>
@@ -748,6 +752,15 @@
   </div>
 </div>
 
+<!-- Modal tabla de proyección -->
+<div class="modal-overlay" id="projection-modal-overlay" onclick="closeProjectionModal(event)">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-date">Plan de proyección 2026</div>
+    <div id="projection-modal-body"></div>
+  </div>
+</div>
+
 <!-- Modal detalle noticia -->
 <div class="modal-overlay" id="news-modal-overlay" onclick="closeNewsModal(event)">
   <div class="modal">
@@ -794,6 +807,7 @@ window.onload = () => {
   updateHeaderBalance();
   renderTodayPanel();
   renderResumen();
+  renderTodayObjective();
 };
 
 function todayStr() {
@@ -1051,6 +1065,10 @@ function saveCapitalMove() {
   let movements = JSON.parse(localStorage.getItem('tj_cap_movements') || '[]');
   movements.push({ date: todayStr(), type: capMoveType, amount: amt, reason: reason });
   localStorage.setItem('tj_cap_movements', JSON.stringify(movements));
+
+  // El plan de proyección se recalcula desde hoy con el nuevo capital base (solo en Depósito/Retiro,
+  // nunca por resultados de trades reales — eso respeta el plan original)
+  regenerateProjectionFromDeposit();
 
   updateHeaderBalance();
   renderTodayPanel();
@@ -1640,6 +1658,8 @@ function saveNewPct() {
   pctHistory.push({ from: todayStr(), pct: val });
   localStorage.setItem('tj_pct_history', JSON.stringify(pctHistory));
   document.getElementById('change-pct-panel').style.display = 'none';
+  // El cambio de % objetivo también ajusta el plan hacia adelante, igual que un depósito/retiro
+  regenerateProjectionFromDeposit();
   renderMensual();
   renderResumen();
 }
@@ -1654,6 +1674,151 @@ function renderPctHistory() {
       <span style="font-weight:700;color:${isCurrent ? 'var(--green)' : 'var(--text-dim)'}">${t.pct}%</span>
     </div>`;
   }).join('');
+}
+
+// ========== PROYECCIÓN DE CAPITAL (plan compuesto fijo) ==========
+const WEEKDAY_NAMES = ['dom','lun','mar','mié','jue','vie','sáb'];
+
+let capitalProjection = JSON.parse(localStorage.getItem('tj_projection') || 'null');
+
+function formatDDMM(date) {
+  return `${String(date.getDate()).padStart(2,'0')}-${MONTH_NAMES[date.getMonth()]}`;
+}
+
+function formatDDMMYYYY(date) {
+  return `${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
+}
+
+function generateProjection(startCapital, startDate) {
+  // Genera día por día desde startDate (inclusive) hasta el 31/12 de ese año.
+  const rows = [];
+  const end = new Date(startDate.getFullYear(), 11, 31);
+  let inversion = startCapital;
+  let cursor = new Date(startDate);
+
+  while (cursor <= end) {
+    const fechaStr = formatDDMMYYYY(cursor);
+    const pct = getPctForDate(fechaStr);
+    const objetivo = inversion * (pct / 100);
+    const capTrabajo = inversion + objetivo;
+    rows.push({
+      anio: cursor.getFullYear(),
+      mes: cursor.getMonth() + 1,
+      dia: WEEKDAY_NAMES[cursor.getDay()],
+      fecha: formatDDMM(cursor),
+      fechaCompleta: fechaStr,
+      pct: pct,
+      inversion: inversion,
+      objetivo: objetivo,
+      capTrabajo: capTrabajo
+    });
+    inversion = capTrabajo;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return rows;
+}
+
+function createProjectionFromToday() {
+  const startCapital = capitalCurrent;
+  const startDate = new Date();
+  startDate.setHours(0,0,0,0);
+  capitalProjection = generateProjection(startCapital, startDate);
+  localStorage.setItem('tj_projection', JSON.stringify(capitalProjection));
+  renderTodayObjective();
+  renderResumen();
+}
+
+function regenerateProjectionFromDeposit() {
+  // Se llama después de un Depósito/Retiro: la proyección se recalcula desde HOY
+  // con el nuevo capitalCurrent, sin tocar el % vigente salvo que el usuario lo cambie aparte.
+  if (!capitalProjection) return; // si nunca se generó, no hay nada que regenerar
+  createProjectionFromToday();
+}
+
+function getTodayProjectionRow() {
+  if (!capitalProjection || capitalProjection.length === 0) return null;
+  const hoy = todayStr();
+  return capitalProjection.find(r => r.fechaCompleta === hoy) || null;
+}
+
+function renderTodayObjective() {
+  const box = document.getElementById('today-objective-box');
+  if (!box) return;
+  const row = getTodayProjectionRow();
+  if (!row) {
+    box.innerHTML = `
+      <div style="font-size:13px;color:var(--text-dim)">Todavía no generaste tu plan de proyección.</div>
+      <button class="btn-secondary" style="margin-top:8px" onclick="createProjectionFromToday()">Generar proyección hasta fin de año</button>
+    `;
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim)">Objetivo de hoy (${row.fecha})</span>
+      <span style="font-size:11px;color:var(--gold);font-weight:700">${row.pct}%</span>
+    </div>
+    <div style="font-size:24px;font-weight:700;color:var(--gold);font-family:var(--mono);margin-top:4px">+$${row.objetivo.toFixed(2)}</div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);margin-top:6px">
+      <span>Cap. trabajo inicial: $${row.inversion.toFixed(2)}</span>
+      <span>Proyectado: $${row.capTrabajo.toFixed(2)}</span>
+    </div>
+    <button class="btn-secondary" style="margin-top:10px" onclick="showProjectionTable()">Ver tabla completa</button>
+  `;
+}
+
+function showProjectionTable() {
+  if (!capitalProjection || capitalProjection.length === 0) {
+    if (confirm('Todavía no generaste el plan de proyección. ¿Generarlo ahora con tu capital actual?')) {
+      createProjectionFromToday();
+      showProjectionTable();
+    }
+    return;
+  }
+  const modal = document.getElementById('projection-modal-overlay');
+  const body = document.getElementById('projection-modal-body');
+  body.innerHTML = `
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">
+      Plan generado el ${capitalProjection[0].fechaCompleta} con capital inicial $${capitalProjection[0].inversion.toFixed(2)}. Esta tabla no cambia con tus resultados reales — solo se regenera si hacés un depósito/retiro o cambiás el % objetivo.
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:6px 4px;color:var(--text-dim)">Fecha</th>
+            <th style="text-align:right;padding:6px 4px;color:var(--text-dim)">%</th>
+            <th style="text-align:right;padding:6px 4px;color:var(--text-dim)">Inversión</th>
+            <th style="text-align:right;padding:6px 4px;color:var(--text-dim)">Objet.</th>
+            <th style="text-align:right;padding:6px 4px;color:var(--text-dim)">Cap. trab.</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${capitalProjection.map(r => `
+            <tr style="border-bottom:1px solid var(--border);${r.fechaCompleta === todayStr() ? 'background:rgba(201,168,76,0.12)' : ''}">
+              <td style="padding:5px 4px">${r.dia} ${r.fecha}</td>
+              <td style="text-align:right;padding:5px 4px">${r.pct}%</td>
+              <td style="text-align:right;padding:5px 4px">${r.inversion.toFixed(2)}</td>
+              <td style="text-align:right;padding:5px 4px;color:var(--green)">${r.objetivo.toFixed(2)}</td>
+              <td style="text-align:right;padding:5px 4px">${r.capTrabajo.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <button class="btn-secondary" style="margin-top:14px" onclick="regenerarProyeccionManual()">Regenerar desde hoy</button>
+  `;
+  modal.classList.add('active');
+}
+
+function closeProjectionModal(e) {
+  if (e.target.id === 'projection-modal-overlay') {
+    document.getElementById('projection-modal-overlay').classList.remove('active');
+  }
+}
+
+function regenerarProyeccionManual() {
+  if (!confirm('Esto va a recalcular el plan desde hoy con tu capital y % actuales. Las filas pasadas no se modifican. ¿Continuar?')) return;
+  createProjectionFromToday();
+  document.getElementById('projection-modal-overlay').classList.remove('active');
 }
 
 // ========== MONTHLY BALANCE ==========
