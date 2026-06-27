@@ -1689,14 +1689,36 @@ function formatDDMMYYYY(date) {
   return `${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
 }
 
+// Feriados de mercado donde XAUUSD/BTC cierran por completo (cierre bancario global).
+// No incluye feriados de "baja liquidez" (Independence Day, Labor Day, Thanksgiving),
+// porque el mercado sigue operable en esos días, solo con menor volumen.
+const MARKET_CLOSED_DATES = new Set([
+  '25/12', // Navidad
+  '01/01'  // Año Nuevo
+]);
+
+function isDiaNoOperable(date) {
+  if (date.getDay() === 6) return true; // sábado: mercado forex cerrado todo el día
+  const ddmm = `${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}`;
+  if (MARKET_CLOSED_DATES.has(ddmm)) return true;
+  return false;
+}
+
 function generateProjection(startCapital, startDate) {
   // Genera día por día desde startDate (inclusive) hasta el 31/12 de ese año.
+  // Domingo cuenta como operable (a la noche, hora Argentina, el mercado forex ya abrió).
+  // Sábados y feriados de cierre total (Navidad, Año Nuevo) se saltean: no generan fila
+  // y no interrumpen el interés compuesto, que sigue directo al próximo día operable.
   const rows = [];
   const end = new Date(startDate.getFullYear(), 11, 31);
   let inversion = startCapital;
   let cursor = new Date(startDate);
 
   while (cursor <= end) {
+    if (isDiaNoOperable(cursor)) {
+      cursor.setDate(cursor.getDate() + 1);
+      continue;
+    }
     const fechaStr = formatDDMMYYYY(cursor);
     const pct = getPctForDate(fechaStr);
     const objetivo = inversion * (pct / 100);
@@ -1744,11 +1766,21 @@ function getTodayProjectionRow() {
 function renderTodayObjective() {
   const box = document.getElementById('today-objective-box');
   if (!box) return;
-  const row = getTodayProjectionRow();
-  if (!row) {
+
+  if (!capitalProjection || capitalProjection.length === 0) {
     box.innerHTML = `
       <div style="font-size:13px;color:var(--text-dim)">Todavía no generaste tu plan de proyección.</div>
       <button class="btn-secondary" style="margin-top:8px" onclick="createProjectionFromToday()">Generar proyección hasta fin de año</button>
+    `;
+    return;
+  }
+
+  const row = getTodayProjectionRow();
+  if (!row) {
+    // La proyección existe, pero hoy es un día no operable (sábado, Navidad o Año Nuevo)
+    box.innerHTML = `
+      <div style="font-size:13px;color:var(--text-dim)">Hoy el mercado no opera (fin de semana o feriado). Sin objetivo para hoy.</div>
+      <button class="btn-secondary" style="margin-top:8px" onclick="showProjectionTable()">Ver tabla completa</button>
     `;
     return;
   }
